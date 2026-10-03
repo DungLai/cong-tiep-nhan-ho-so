@@ -13,8 +13,8 @@ interface Message {
 
 const quickQuestions = qna.slice(0, 4).map((item) => item.q);
 
-const errorText =
-  "Xin lỗi, hệ thống đang bận. Bạn thử lại sau ít phút hoặc để lại email/số điện thoại trong form báo giá nhé.";
+// Hiện khi gọi Gemini thất bại (thiếu/sai API key, hết quota, mất kết nối...).
+const errorText = "Xin lỗi, đang có lỗi, vui lòng liên hệ Dũng - 123456789";
 
 const initialMessages: Message[] = [
   { from: "bot", text: "Chào bạn! Mình là trợ lý ảo của DuHoc24, bạn cần hỗ trợ gì về hồ sơ du học?" },
