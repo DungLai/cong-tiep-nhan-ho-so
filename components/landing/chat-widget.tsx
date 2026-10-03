@@ -3,6 +3,7 @@
 import React from "react";
 import { MessageCircle, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { qna } from "@/lib/chatbot";
 import { cn } from "@/lib/utils";
 
 interface Message {
@@ -10,23 +11,10 @@ interface Message {
   text: string;
 }
 
-const quickQuestions = [
-  "Dịch vụ này gồm những gì?",
-  "Bao lâu thì có kết quả xét duyệt?",
-  "Chi phí dịch vụ là bao nhiêu?",
-  "Tôi cần chuẩn bị giấy tờ gì?",
-];
+const quickQuestions = qna.slice(0, 4).map((item) => item.q);
 
-const cannedAnswers: Record<string, string> = {
-  "Dịch vụ này gồm những gì?":
-    "Bên mình lo phần đối chiếu điểm chuẩn, kiểm tra hồ sơ và tư vấn chọn trường, chia làm 2 gói: Cơ bản và Toàn diện.",
-  "Bao lâu thì có kết quả xét duyệt?":
-    "Nộp đủ giấy tờ là có kết quả đối chiếu điểm chuẩn ngay. Sau đó tư vấn viên sẽ gọi xác nhận lại với bạn trong vòng 24h.",
-  "Chi phí dịch vụ là bao nhiêu?":
-    "Gói Cơ bản 18.000.000₫, gói Toàn diện 45.000.000₫ nhé. Bạn kéo lên phần báo giá phía trên để xem chi tiết quyền lợi từng gói.",
-  "Tôi cần chuẩn bị giấy tờ gì?":
-    "3 thứ thôi: bảng điểm (PDF), ảnh chứng chỉ IELTS, và ảnh CMND/CCCD hoặc hộ chiếu.",
-};
+const errorText =
+  "Xin lỗi, hệ thống đang bận. Bạn thử lại sau ít phút hoặc để lại email/số điện thoại trong form báo giá nhé.";
 
 const initialMessages: Message[] = [
   { from: "bot", text: "Chào bạn! Mình là trợ lý ảo của DuHoc24, bạn cần hỗ trợ gì về hồ sơ du học?" },
@@ -37,15 +25,49 @@ export function ChatWidget() {
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [input, setInput] = React.useState("");
 
-  function sendMessage(text: string) {
-    if (!text.trim()) return;
-    const answer = cannedAnswers[text];
-    setMessages((prev) => [
-      ...prev,
-      { from: "user", text },
-      ...(answer ? [{ from: "bot" as const, text: answer }] : []),
-    ]);
+  const [loading, setLoading] = React.useState(false);
+  const listRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+  }, [messages, loading]);
+
+  async function sendMessage(text: string) {
+    if (!text.trim() || loading) return;
+    const history: Message[] = [...messages, { from: "user", text }];
+    setMessages(history);
     setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      // Đọc câu trả lời dạng stream, hiện dần từng phần vào tin nhắn cuối của bot.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let answer = "";
+      setMessages((prev) => [...prev, { from: "bot", text: "" }]);
+      setLoading(false);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        answer += decoder.decode(value, { stream: true });
+        const partial = answer;
+        setMessages((prev) => [...prev.slice(0, -1), { from: "bot", text: partial }]);
+      }
+      if (!answer.trim()) {
+        setMessages((prev) => [...prev.slice(0, -1), { from: "bot", text: errorText }]);
+      }
+    } catch {
+      setMessages((prev) => [...prev, { from: "bot", text: errorText }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -55,7 +77,7 @@ export function ChatWidget() {
           <div className="flex items-center justify-between border-b bg-primary px-4 py-3 text-primary-foreground">
             <div>
               <p className="text-sm font-medium">Hỏi đáp nhanh</p>
-              <p className="text-xs opacity-80">Thường trả lời trong vài phút</p>
+              <p className="text-xs opacity-80">Trợ lý ảo trả lời ngay</p>
             </div>
             <button
               onClick={() => setOpen(false)}
@@ -66,7 +88,7 @@ export function ChatWidget() {
             </button>
           </div>
 
-          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+          <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-4">
             {messages.map((m, i) => (
               <div
                 key={i}
@@ -74,7 +96,7 @@ export function ChatWidget() {
               >
                 <div
                   className={cn(
-                    "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm",
+                    "max-w-[85%] whitespace-pre-line rounded-2xl px-3.5 py-2 text-sm",
                     m.from === "user"
                       ? "rounded-br-sm bg-primary text-primary-foreground"
                       : "rounded-bl-sm bg-muted text-foreground",
@@ -84,6 +106,13 @@ export function ChatWidget() {
                 </div>
               </div>
             ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-bl-sm bg-muted px-3.5 py-2 text-sm text-muted-foreground">
+                  Đang trả lời...
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="border-t p-3">
@@ -92,7 +121,8 @@ export function ChatWidget() {
                 <button
                   key={q}
                   onClick={() => sendMessage(q)}
-                  className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground duration-150 hover:border-primary hover:text-primary"
+                  disabled={loading}
+                  className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground duration-150 hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
                 >
                   {q}
                 </button>
@@ -111,7 +141,7 @@ export function ChatWidget() {
                 placeholder="Nhập câu hỏi của bạn..."
                 className="h-9 flex-1 rounded-full border border-input bg-transparent px-3.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
-              <Button type="submit" size="icon" className="shrink-0" aria-label="Gửi">
+              <Button type="submit" size="icon" className="shrink-0" aria-label="Gửi" disabled={loading || !input.trim()}>
                 <Send className="size-4" />
               </Button>
             </form>
